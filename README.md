@@ -13,6 +13,7 @@ s3:
   aws_secret_access_key: AWS_SECRET_KEY
   region_name: eu-west-1 # optional region, default is us-east-1
   endpoint_url: https://s3.eu-west-1.backblazeb2.com/ # optional, URL for S3-compatible services like Backblaze or MinIO
+  default_bucket: my_bucket # optional temporary for old install, please setup this
 ```
 
 ## Services
@@ -23,7 +24,7 @@ Example data for service call:
 
 ```
 {
-  "bucket": "my_bucket",
+  "bucket": "my_bucket", # optional, default get from default_bucket
   "key": "my_key/file.jpg",
   "file_path": "/some/path/file.jpg",
   "storage_class": "STANDARD_IA" # optional
@@ -38,7 +39,7 @@ The s3 entity exposes a `copy` service for moving files around in S3.
 Example data for service call:
 ```
 {
-  "bucket": "my_bucket",
+  "bucket": "my_bucket", # optional, default get from default_bucket
   "key_source": "my_key/file_source.jpg",
   "key_destination": "my_key/file_destination.jpg"
 }
@@ -47,9 +48,9 @@ Example data for service call:
 If you need to move items between buckets use this syntax:
 ```
 {
-  "bucket_source": "my_source_bucket",
+  "bucket_source": "my_source_bucket", # optional, default get from default_bucket
   "key_source": "my_key/file_source.jpg",
-  "bucket_destintation": "my_destination_bucket",
+  "bucket_destintation": "my_destination_bucket", # optional, default get from default_bucket
   "key_destination": "my_key/file_destination.jpg"
 }
 ```
@@ -60,7 +61,7 @@ The s3 entity exposes a `delete` service for deleting files (objects) from S3.
 Example data for service call:
 ```
 {
-  "bucket": "my_bucket",
+  "bucket": "my_bucket", # optional, default get from default_bucket
   "key": "my_key/file_source.jpg",
 }
 ```
@@ -71,7 +72,7 @@ The S3 entity exposes a `signurl` service for generating pre-signed URLs with a 
 Example data for service call:
 ```
 {
-  "bucket": "my_bucket",
+  "bucket": "my_bucket", # optional, default get from default_bucket
   "key": "my_key/file_source.jpg",
   "duration": 300
 }

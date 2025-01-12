@@ -3,71 +3,41 @@
 import logging
 import os
 import voluptuous as vol
-import boto3
-import botocore
 
 import homeassistant.helpers.config_validation as cv
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import SOURCE_USER, ConfigEntry
+from .manager import S3Client, S3ClientError
+from .const import (
+    DOMAIN,
+    BUCKET,
+    KEY,
+    FILE_PATH,
+    STORAGE_CLASS,
+    CONTENT_TYPE,
+    TAGS,
+    BUCKET_SOURCE,
+    BUCKET_DESTINATION,
+    KEY_SOURCE,
+    KEY_DESTINATION,
+    DURATION,
+    MESSAGE,
+    CONF_REGION,
+    CONF_ACCESS_KEY_ID,
+    CONF_SECRET_ACCESS_KEY,
+    CONF_ENDPOINT_URL,
+    CONF_DEFAULT_BUCKET,
+    DEFAULT_REGION,
+    SUPPORTED_REGIONS,
+    STORAGE_CLASSES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-CONF_REGION = "region_name"
-CONF_ACCESS_KEY_ID = "aws_access_key_id"
-CONF_SECRET_ACCESS_KEY = "aws_secret_access_key"
-CONF_ENDPOINT_URL = "endpoint_url"
-
-DOMAIN = "s3"
 COPY_SERVICE = "copy"
 PUT_SERVICE = "put"
 DELETE_SERVICE = "delete"
 SIGN_SERVICE = "signurl"
-
-BUCKET = "bucket"
-BUCKET_SOURCE = "bucket_source"
-BUCKET_DESTINATION = "bucket_destination"
-FILE_PATH = "file_path"
-KEY = "key"
-KEY_DESTINATION = "key_destination"
-KEY_SOURCE = "key_source"
-STORAGE_CLASS = "storage_class"
-CONTENT_TYPE = "content_type"
-DURATION = "duration"
-MESSAGE = "message"
-TAGS = "tags"
-DEFAULT_REGION = "us-east-1"
-SUPPORTED_REGIONS = [
-    "us-east-1",
-    "us-east-2",
-    "us-west-1",
-    "us-west-2",
-    "ca-central-1",
-    "eu-west-1",
-    "eu-central-1",
-    "eu-west-2",
-    "eu-west-3",
-    "eu-north-1",
-    "eu-south-1",
-    "ap-southeast-1",
-    "ap-southeast-2",
-    "ap-northeast-2",
-    "ap-northeast-1",
-    "ap-south-1",
-    "sa-east-1",
-    "ru-central1",
-    "us-phoenix-1",
-]
-
-STORAGE_CLASSES = [
-    "STANDARD",
-    "REDUCED_REDUNDANCY",
-    "STANDARD_IA",
-    "ONEZONE_IA",
-    "INTELLIGENT_TIERING",
-    "GLACIER_IR",
-    "GLACIER",
-    "DEEP_ARCHIVE",
-]
 
 REQUIREMENTS = ["boto3==1.9.252"]
 
@@ -77,10 +47,14 @@ S3_SCHEMA = vol.Schema(
         vol.Required(CONF_ACCESS_KEY_ID): cv.string,
         vol.Required(CONF_SECRET_ACCESS_KEY): cv.string,
         vol.Optional(CONF_ENDPOINT_URL): cv.string,
+        vol.Optional(CONF_DEFAULT_BUCKET): cv.string, # temporary optional field for old install
     }
 )
 
-CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.All(cv.ensure_list, [S3_SCHEMA])}, extra=vol.ALLOW_EXTRA,)
+CONFIG_SCHEMA = vol.Schema(
+    {DOMAIN: vol.All(cv.ensure_list, [S3_SCHEMA])},
+    extra=vol.ALLOW_EXTRA,
+)
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -89,7 +63,9 @@ async def async_setup(hass: HomeAssistant, config: dict):
     if DOMAIN in config:
         for entry in config[DOMAIN]:
             hass.async_create_task(
-                hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER}, data=entry)
+                hass.config_entries.flow.async_init(
+                    DOMAIN, context={"source": SOURCE_USER}, data=entry
+                )
             )
 
     def put_file(call):
@@ -121,21 +97,19 @@ async def async_setup(hass: HomeAssistant, config: dict):
         extra_args = {"StorageClass": storage_class}
         if content_type:
             extra_args.update({"ContentType": content_type})
-            _LOGGER.debug(
-                f"Using content-type {content_type}  upload {file_name}"
-            )
+            _LOGGER.debug(f"Using content-type {content_type}  upload {file_name}")
         if tag_list:
             extra_args.update({"Tagging": tag_list})
-            _LOGGER.debug(
-                f"Adding tags {tag_list} for file: {file_name}"
-            )
+            _LOGGER.debug(f"Adding tags {tag_list} for file: {file_name}")
 
         try:
-            s3_client.upload_file(Filename=file_path, Bucket=bucket, Key=key, ExtraArgs=extra_args)
+            s3_client.upload_file(
+                Filename=file_path, Bucket=bucket, Key=key, ExtraArgs=extra_args
+            )
             _LOGGER.info(
                 f"Put file {file_name} to S3 bucket {bucket} with key {key} using storage class {storage_class}"
             )
-        except botocore.exceptions.ClientError as err:
+        except S3ClientError as err:
             _LOGGER.error(f"S3 upload error: {err}")
 
     def copy_file(call):
@@ -151,12 +125,6 @@ async def async_setup(hass: HomeAssistant, config: dict):
         key_source = call.data.get(KEY_SOURCE)
         key_destination = call.data.get(KEY_DESTINATION)
 
-        if bucket_source is None or bucket_destination is None or key_source is None or key_destination is None:
-            _LOGGER.error(
-                f"Invalid copy paramaters from {bucket_source}/{key_source} to {bucket_destination}/{key_destination}"
-            )
-            return
-
         s3_client = None
         for entry in hass.config_entries.async_entries(DOMAIN):
             s3_client = hass.data[DOMAIN][entry.entry_id]
@@ -165,17 +133,32 @@ async def async_setup(hass: HomeAssistant, config: dict):
             _LOGGER.error("S3 client instance not found")
             return
 
-        copy_source = {
-            'Bucket': bucket_source,
-            'Key': key_source
-        }
+        bucket_source = s3_client.get_bucket_name(bucket_source)
+        bucket_destination = s3_client.get_bucket_name(bucket_destination)
+
+        # if source and destination full ident do nothing
+        if bucket_source == bucket_destination and key_source == key_destination:
+            return
+
+        if (
+            bucket_source is None
+            or bucket_destination is None
+            or key_source is None
+            or key_destination is None
+        ):
+            _LOGGER.error(
+                f"Invalid copy paramaters from {bucket_source}/{key_source} to {bucket_destination}/{key_destination}"
+            )
+            return
+
+        copy_source = {"Bucket": bucket_source, "Key": key_source}
 
         try:
             s3_client.copy(copy_source, bucket_destination, key_destination)
             _LOGGER.info(
                 f"Copied file {bucket_source}/{key_source} to {bucket_destination}/{key_destination}"
             )
-        except botocore.exceptions.ClientError as err:
+        except S3ClientError as err:
             _LOGGER.error(f"S3 copy error: {err}")
 
     def delete_file(call):
@@ -193,10 +176,8 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
         try:
             s3_client.delete_object(Key=key, Bucket=bucket)
-            _LOGGER.info(
-                f"Delete file with key {key} from S3 bucket {bucket}"
-            )
-        except botocore.exceptions.ClientError as err:
+            _LOGGER.info(f"Delete file with key {key} from S3 bucket {bucket}")
+        except S3ClientError as err:
             _LOGGER.error(f"S3 delete error: {err}")
 
     def create_presigned_url(call):
@@ -212,7 +193,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         duration = call.data.get(DURATION)
         message = call.data.get(MESSAGE)
 
-    # Generate a presigned URL for the S3 object
+        # Generate a presigned URL for the S3 object
         s3_client = None
         for entry in hass.config_entries.async_entries(DOMAIN):
             s3_client = hass.data[DOMAIN][entry.entry_id]
@@ -222,20 +203,22 @@ async def async_setup(hass: HomeAssistant, config: dict):
             return
 
         try:
-            URL = s3_client.generate_presigned_url('get_object',
-                                        Params={'Bucket': bucket,
-                                                'Key': key},
-                                        ExpiresIn=duration)
+            URL = s3_client.generate_presigned_url(
+                "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=duration
+            )
             _LOGGER.info(
                 f"Created SignedUrl of {URL} for file with key {key} from S3 bucket {bucket}"
             )
-        except botocore.exceptions.ClientError as err:
+        except S3ClientError as err:
             _LOGGER.error(f"SignedURL error: {err}")
-    ## Fire event to Home Assistant event bus with type s3_signed_url with URL key and data value
-        hass.bus.fire("s3_signed_url", {
-            "URL": URL,
-            MESSAGE: message,
-        })
+        ## Fire event to Home Assistant event bus with type s3_signed_url with URL key and data value
+        hass.bus.fire(
+            "s3_signed_url",
+            {
+                "URL": URL,
+                MESSAGE: message,
+            },
+        )
 
     # Register our service with Home Assistant.
     hass.services.async_register(DOMAIN, PUT_SERVICE, put_file)
@@ -245,27 +228,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 
-async def register_client(hass: HomeAssistant, entry: ConfigEntry):
-    aws_config = {
-        CONF_REGION: entry.data[CONF_REGION],
-        CONF_ACCESS_KEY_ID: entry.data[CONF_ACCESS_KEY_ID],
-        CONF_SECRET_ACCESS_KEY: entry.data[CONF_SECRET_ACCESS_KEY],
-    }
-
-    # optional settings
-    if CONF_ENDPOINT_URL in entry.data:
-        aws_config[CONF_ENDPOINT_URL] = entry.data[CONF_ENDPOINT_URL]
-
-    def boto_client(aws_config: dict):
-        return boto3.client("s3", **aws_config)  # Will not raise error.
-
-    client = await hass.async_add_executor_job(boto_client, aws_config)
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = client
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    await register_client(hass, entry)
-    entry.async_on_unload(entry.add_update_listener(update_listener))
+    cli = S3Client(entry)
+    await cli.init_client(hass)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = cli
+
+    entry.async_on_unload(entry.add_update_listener(cli.update_listener))
 
     return True
 
@@ -273,8 +241,3 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data[DOMAIN].pop(entry.entry_id, None)
     return True
-
-
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry):
-    """Handle options update."""
-    await register_client(hass, entry)

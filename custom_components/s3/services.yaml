@@ -4,7 +4,6 @@ put:
   fields:
     bucket:
       description: S3 bucket to receive upload
-      required: true
       example: my_bucket
       selector:
         text:
@@ -59,7 +58,6 @@ copy:
     bucket:
       description: Source and destination S3 bucket
       example: my_bucket
-      required: true
       selector:
         text:
     key_source:
@@ -81,7 +79,6 @@ delete:
     bucket:
       description: S3 bucket to delete from
       example: my_bucket
-      required: true
       selector:
         text:
     key:
@@ -97,7 +94,6 @@ signurl:
     bucket:
       description: S3 bucket of file
       example: my_bucket
-      required: true
       selector:
         text:
     key:

@@ -10,7 +10,8 @@
                     "region_name": "AWS bucket Region",
                     "aws_access_key_id": "AWS Access Key",
                     "aws_secret_access_key": "AWS Secret Access Key",
-                    "endpoint_url": "Endpoint URL for compatible services"
+                    "endpoint_url": "Endpoint URL for compatible services",
+                    "default_bucket": "This bucket will use by default"
                 }
             }
         },
@@ -28,7 +29,8 @@
                     "bucket": "Bucket Name",
                     "region_name": "AWS bucket Region",
                     "aws_secret_access_key": "AWS Secret Access Key",
-                    "endpoint_url": "Endpoint URL for compatible services"
+                    "endpoint_url": "Endpoint URL for compatible services",
+                    "default_bucket": "This bucket will use by default"
                 }
             }
         }
